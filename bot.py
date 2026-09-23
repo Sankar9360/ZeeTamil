@@ -4,11 +4,11 @@ import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-# Railway Environment Variables வழியாக பெறப்படும்
+# உங்கள் Telegram விவரங்கள்
 API_ID = 23990433
-API_HASH = os.environ.get("e6c4b6ee1933711bc4da9d7d17e1eb20")
-BOT_TOKEN = os.environ.get("6300056570:AAEtxFMyGlK6LexF0QEM8qduYH6GTF762co")
-TARGET_CHANNEL = os.environ.get("-1002164111160")  # எ.கா: @mychannel அல்லது -100xxxxxxxxxx
+API_HASH = "e6c4b6ee1933711bc4da9d7d17e1eb20"
+BOT_TOKEN = "6390056570:AAEtvENuClK6LevE00FM8oduYU6CTF76Zco"
+TARGET_CHANNEL = -1002156111560
 
 app = Client(
     "streamtape_bot",
@@ -68,4 +68,3 @@ async def download_and_upload(client: Client, message: Message):
 if __name__ == "__main__":
     print("Bot is starting...")
     app.run()
-  
