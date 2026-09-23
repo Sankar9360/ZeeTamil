@@ -26,58 +26,59 @@ def get_streamtape_download_link(url: str):
         "Referer": "https://streamtape.to/"
     }
     
-    # 1. பக்கத்தைப் பெறுதல்
     response = requests.get(url, headers=headers, timeout=20)
     html = response.text
 
-    # Streamtape புதிய Token Extractions
-    # வடிவம்: document.getElementById('...').innerHTML = "..." + "..." + ('...').substring(x);
-    # பொதுவாக token எடுக்கும் முறை:
-    token_match = re.search(r"&token=([a-zA-Z0-9_\-]+)", html)
-    base_match = re.search(r"innerHTML\s*=\s*['\"](//streamtape\.[a-z]+/get_video\?[^'\"]+)['\"]", html)
+    # Streamtape வீடியோ ஐடி மற்றும் டோக்கனைப் பிரித்தெடுத்தல்
+    id_match = re.search(r"get_video\?id=([a-zA-Z0-9_\-]+)", html)
+    if not id_match:
+        # மற்றொரு முறை
+        id_match = re.search(r"/v/([a-zA-Z0-9_\-]+)", url)
     
-    if not base_match:
-        # மாற்று முறை: robotlink அல்லது ideooolink
-        base_match = re.search(r"document\.getElementById\(['\"][^'\"]+['\"]\)\.innerHTML\s*=\s*['\"](//[^'\"]+)['\"]", html)
+    video_id = id_match.group(1) if id_match else None
 
-    # Substring வைத்து token சேர்க்கும் புதிய வடிவம்:
+    # Substring டோக்கனை எடுத்தல்
     sub_match = re.search(r"\+ \('([^']+)'\)\.substring\(([0-9]+)\)", html)
+    token = None
+    if sub_match:
+        full_str = sub_match.group(1)
+        offset = int(sub_match.group(2))
+        token = full_str[offset:]
+    else:
+        # நேரடி டோக்கன் வடிவம்
+        token_match = re.search(r"&token=([a-zA-Z0-9_\-]+)", html)
+        if token_match:
+            token = token_match.group(1)
 
-    if base_match:
-        part1 = base_match.group(1)
-        token_part = ""
-        if sub_match:
-            full_str = sub_match.group(1)
-            offset = int(sub_match.group(2))
-            token_part = full_str[offset:]
-        elif token_match:
-            token_part = "&token=" + token_match.group(1)
-
-        final_url = "https:" + part1 + token_part
+    if video_id and token:
+        # டொமைன் பிழைகளைத் தவிர்க்க நிலையான டொமைனில் லிங்க் உருவாக்குதல்
+        clean_token = token.replace("&token=", "")
+        final_url = f"https://streamtape.com/get_video?id={video_id}&token={clean_token}"
         return final_url
 
-    # பழைய robotlink முறை (சில server-களுக்கு):
+    # Fallback முறை
     robot_match = re.findall(r"ById\('robotlink'\)\.innerHTML\s*=\s*'([^']+)'\s*\+\s*'([^']+)'", html)
     if robot_match:
-        return "https:" + robot_match[0][0] + robot_match[0][1]
+        raw = "https:" + robot_match[0][0] + robot_match[0][1]
+        raw = re.sub(r"streamtape[a-z0-9]+\.to", "streamtape.com", raw)
+        return raw
 
     return None
 
-async def download_file(download_url, output_path, status_msg):
+async def download_file(download_url, output_path):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Referer": "https://streamtape.to/"
+        "Referer": "https://streamtape.com/"
     }
     
     async with aiohttp.ClientSession(headers=headers) as session:
-        # Streamtape stream லிங்க்கை redirect செய்து mp4 ஃபைலை எடுக்கும்
         async with session.get(download_url, allow_redirects=True) as resp:
             if resp.status != 200:
-                print(f"Download status: {resp.status}")
+                print(f"Failed with status: {resp.status}")
                 return False
             
             async with aiofiles.open(output_path, mode='wb') as f:
-                async for chunk in resp.content.iter_chunked(1024 * 1024):  # 1MB chunks
+                async for chunk in resp.content.iter_chunked(2 * 1024 * 1024):  # 2MB chunks
                     await f.write(chunk)
             return True
 
@@ -97,22 +98,22 @@ async def handle_video(client: Client, message: Message):
     output_filename = f"video_{message.id}.mp4"
 
     try:
-        # Step 1: Direct Link-ஐ எடுத்தல்
+        # Step 1: தூய streamtape.com லிங்க்கை உருவாக்குதல்
         direct_url = await asyncio.to_thread(get_streamtape_download_link, url)
         
         if not direct_url:
             await status_msg.edit_text("வீடியோ லிங்க் கிடைக்கவில்லை! வீடியோ நீக்கப்பட்டிருக்கலாம்.")
             return
 
-        # Step 2: வீடியோவை டவுன்லோட் செய்தல்
+        # Step 2: டவுன்லோட் செய்தல்
         await status_msg.edit_text("வீடியோ டவுன்லோட் ஆகிறது... காத்திருக்கவும்.")
-        success = await download_file(direct_url, output_filename, status_msg)
+        success = await download_file(direct_url, output_filename)
 
         if not success or not os.path.exists(output_filename):
-            await status_msg.edit_text("வீடியோ டவுன்லோட் செய்ய முடியவில்லை (403/Blocked).")
+            await status_msg.edit_text("வீடியோ டவுன்லோட் செய்ய முடியவில்லை (Blocked / Link Expired).")
             return
 
-        # Step 3: சேனலுக்கு அப்லோட் செய்தல்
+        # Step 3: Telegram சேனலுக்கு அப்லோட் செய்தல்
         await status_msg.edit_text("சேனலுக்கு அப்லோட் செய்யப்படுகிறது...")
         await client.send_video(
             chat_id=TARGET_CHANNEL,
