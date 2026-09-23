@@ -2,14 +2,11 @@ import os
 import re
 import time
 import asyncio
-import aiohttp
-import aiofiles
-import requests
 import subprocess
+import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-# உங்கள் Telegram விவரங்கள்
 API_ID = 23990433
 API_HASH = "e6c4b6ee1933711bc4da9d7d17e1eb20"
 BOT_TOKEN = "6489443094:AAFZfStZWucxMwtvk0i7XcbI2aYZvYpNT8E"
@@ -22,82 +19,54 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
-def get_streamtape_download_link(url: str):
+def extract_streamtape(url: str):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         "Referer": "https://streamtape.to/"
     }
-    response = requests.get(url, headers=headers, timeout=20)
-    html = response.text
+    resp = requests.get(url, headers=headers, timeout=20)
+    html = resp.text
 
-    id_match = re.search(r"get_video\?id=([a-zA-Z0-9_\-]+)", html)
-    if not id_match:
-        id_match = re.search(r"/v/([a-zA-Z0-9_\-]+)", url)
-    video_id = id_match.group(1) if id_match else None
+    # Extract Video ID
+    id_m = re.search(r"get_video\?id=([a-zA-Z0-9_\-]+)", html)
+    if not id_m:
+        id_m = re.search(r"/v/([a-zA-Z0-9_\-]+)", url)
+    if not id_m:
+        return None
+    video_id = id_m.group(1)
 
-    sub_match = re.search(r"\+ \('([^']+)'\)\.substring\(([0-9]+)\)", html)
+    # Extract Token via Substring logic
+    sub_m = re.search(r"\+ \('([^']+)'\)\.substring\(([0-9]+)\)", html)
     token = None
-    if sub_match:
-        full_str = sub_match.group(1)
-        offset = int(sub_match.group(2))
-        token = full_str[offset:]
+    if sub_m:
+        raw_str = sub_m.group(1)
+        offset = int(sub_m.group(2))
+        token = raw_str[offset:]
     else:
-        token_match = re.search(r"&token=([a-zA-Z0-9_\-]+)", html)
-        if token_match:
-            token = token_match.group(1)
+        tok_m = re.search(r"&token=([a-zA-Z0-9_\-]+)", html)
+        if tok_m:
+            token = tok_m.group(1)
 
-    if video_id and token:
-        clean_token = token.replace("&token=", "")
-        return f"https://streamtape.com/get_video?id={video_id}&token={clean_token}"
+    if not token:
+        return None
 
-    robot_match = re.findall(r"ById\('robotlink'\)\.innerHTML\s*=\s*'([^']+)'\s*\+\s*'([^']+)'", html)
-    if robot_match:
-        raw = "https:" + robot_match[0][0] + robot_match[0][1]
-        return re.sub(r"streamtape[a-z0-9]+\.to", "streamtape.com", raw)
+    clean_tok = token.replace("&token=", "")
+    return f"https://streamtape.com/get_video?id={video_id}&token={clean_tok}&stream=1"
 
-    return None
+def download_streamtape(stream_url, page_url, output_path):
+    # yt-dlp headers vazhiyaaga proper file download seiyum
+    cmd = [
+        "yt-dlp",
+        "--no-check-certificates",
+        "--add-header", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "--add-header", f"Referer: {page_url}",
+        "-o", output_path,
+        stream_url
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return proc.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 100000
 
-# டவுன்லோட் Progress Bar காட்டும் செயல்முறை
-async def download_file(download_url, output_path, status_msg):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Referer": "https://streamtape.com/"
-    }
-    
-    async with aiohttp.ClientSession(headers=headers) as session:
-        async with session.get(download_url, allow_redirects=True) as resp:
-            if resp.status != 200:
-                return False
-            
-            total_size = int(resp.headers.get("content-length", 0))
-            downloaded = 0
-            last_edit = time.time()
-
-            async with aiofiles.open(output_path, mode='wb') as f:
-                async for chunk in resp.content.iter_chunked(1024 * 1024):  # 1MB Chunks
-                    await f.write(chunk)
-                    downloaded += len(chunk)
-                    now = time.time()
-
-                    # 3 விநாடிகளுக்கு ஒருமுறை Status Update செய்தல்
-                    if now - last_edit > 3:
-                        last_edit = now
-                        if total_size > 0:
-                            percent = (downloaded / total_size) * 100
-                            cur_mb = downloaded / (1024 * 1024)
-                            tot_mb = total_size / (1024 * 1024)
-                            text = f"📥 **Downloading...**\n`{percent:.1f}%` ({cur_mb:.1f}MB / {tot_mb:.1f}MB)"
-                        else:
-                            cur_mb = downloaded / (1024 * 1024)
-                            text = f"📥 **Downloading...**\n{cur_mb:.1f}MB"
-                        
-                        try:
-                            await status_msg.edit_text(text)
-                        except Exception:
-                            pass
-            return True
-
-def fix_and_get_metadata(raw_video, final_video, thumb_path):
+def fix_faststart(raw_video, final_video, thumb_path):
     fix_cmd = [
         "ffmpeg", "-y", "-i", raw_video,
         "-c", "copy", "-movflags", "+faststart",
@@ -105,7 +74,7 @@ def fix_and_get_metadata(raw_video, final_video, thumb_path):
     ]
     subprocess.run(fix_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    use_file = final_video if os.path.exists(final_video) else raw_video
+    use_file = final_video if os.path.exists(final_video) and os.path.getsize(final_video) > 100000 else raw_video
 
     duration = 0
     width = 1280
@@ -145,7 +114,6 @@ def fix_and_get_metadata(raw_video, final_video, thumb_path):
 
     return duration, width, height, use_file
 
-# அப்லோட் Progress Bar காட்டும் செயல்முறை
 last_upload_edit = {}
 
 async def upload_progress(current, total, status_msg):
@@ -163,45 +131,43 @@ async def upload_progress(current, total, status_msg):
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_handler(client: Client, message: Message):
-    await message.reply_text("வணக்கம்! Streamtape URL-ஐ அனுப்பவும்.")
+    await message.reply_text("Vanakkam! Streamtape URL-ai anuppavum.")
 
 @app.on_message(filters.text & filters.private)
 async def handle_video(client: Client, message: Message):
     url = message.text.strip()
     
     if not ("streamtape" in url or url.startswith("http")):
-        await message.reply_text("சரியான Streamtape URL-ஐ அனுப்பவும்!")
+        await message.reply_text("Sariyana Streamtape URL-ai anuppavum!")
         return
 
-    status_msg = await message.reply_text("🔍 **Processing Link...**")
+    status_msg = await message.reply_text("🔍 **Extracting Stream Link...**")
     raw_video = f"raw_{message.id}.mp4"
     ready_video = f"ready_{message.id}.mp4"
     thumb_file = f"thumb_{message.id}.jpg"
 
     try:
-        # Step 1: Link பிரித்தெடுத்தல்
-        direct_url = await asyncio.to_thread(get_streamtape_download_link, url)
+        direct_url = await asyncio.to_thread(extract_streamtape, url)
         if not direct_url:
-            await status_msg.edit_text("❌ வீடியோ லிங்க் கிடைக்கவில்லை!")
+            await status_msg.edit_text("❌ Video token extract panna mudiyavillai. Link expired aagiyirukkalaam.")
             return
 
-        # Step 2: Downloading Progress உடன் டவுன்லோட்
-        await status_msg.edit_text("📥 **Starting Download...**")
-        success = await download_file(direct_url, raw_video, status_msg)
+        await status_msg.edit_text("📥 **Downloading Video from Server... (Wait 1-2 mins)**")
+        success = await asyncio.to_thread(download_streamtape, direct_url, url, raw_video)
 
-        if not success or not os.path.exists(raw_video):
-            await status_msg.edit_text("❌ டவுன்லோட் தோல்வியடைந்தது.")
+        if not success or not os.path.exists(raw_video) or os.path.getsize(raw_video) < 100000:
+            await status_msg.edit_text("❌ Download tholviyadainthadhu (Empty response / Server Blocked).")
             return
 
-        # Step 3: Faststart & Thumbnail
-        await status_msg.edit_text("⚙️ **Optimizing Video & Thumbnail...**")
+        file_size_mb = os.path.getsize(raw_video) / (1024 * 1024)
+        await status_msg.edit_text(f"⚙️ **Downloaded {file_size_mb:.1f}MB! Optimizing...**")
+        
         duration, width, height, final_upload_file = await asyncio.to_thread(
-            fix_and_get_metadata, raw_video, ready_video, thumb_file
+            fix_faststart, raw_video, ready_video, thumb_file
         )
         thumb_path = thumb_file if os.path.exists(thumb_file) else None
 
-        # Step 4: Uploading Progress உடன் அப்லோட்
-        await status_msg.edit_text("📤 **Starting Upload...**")
+        await status_msg.edit_text("📤 **Starting Upload to Channel...**")
         await client.send_video(
             chat_id=TARGET_CHANNEL,
             video=final_upload_file,
@@ -214,10 +180,10 @@ async def handle_video(client: Client, message: Message):
             progress=upload_progress,
             progress_args=(status_msg,)
         )
-        await status_msg.edit_text("✅ **வெற்றிகரமாக சேனலில் பதிவேற்றப்பட்டது!**")
+        await status_msg.edit_text("✅ **Vetrigaramaaga upload seiyyappattadhu!**")
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ பிழை: {str(e)}")
+        await status_msg.edit_text(f"❌ Error: {str(e)}")
     finally:
         for f in [raw_video, ready_video, thumb_file]:
             if os.path.exists(f):
@@ -226,4 +192,4 @@ async def handle_video(client: Client, message: Message):
 if __name__ == "__main__":
     print("Bot is starting...")
     app.run()
-                
+    
