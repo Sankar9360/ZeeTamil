@@ -3,3 +3,4 @@ tgcrypto==1.2.5
 requests
 aiohttp
 yt-dlp
+aiofiles
