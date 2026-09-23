@@ -7,8 +7,8 @@ from pyrogram.types import Message
 # Railway Environment Variables வழியாக பெறப்படும்
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-TARGET_CHANNEL = os.environ.get("TARGET_CHANNEL")  # எ.கா: @mychannel அல்லது -100xxxxxxxxxx
+BOT_TOKEN = os.environ.get("6300056570:AAEtxFMyGlK6LexF0QEM8qduYH6GTF762co")
+TARGET_CHANNEL = os.environ.get("-1002164111160")  # எ.கா: @mychannel அல்லது -100xxxxxxxxxx
 
 app = Client(
     "streamtape_bot",
