@@ -27,17 +27,14 @@ def get_streamtape_download_link(url: str):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Referer": "https://streamtape.to/"
     }
-    
     response = requests.get(url, headers=headers, timeout=20)
     html = response.text
 
-    # Video ID எடுத்தல்
     id_match = re.search(r"get_video\?id=([a-zA-Z0-9_\-]+)", html)
     if not id_match:
         id_match = re.search(r"/v/([a-zA-Z0-9_\-]+)", url)
     video_id = id_match.group(1) if id_match else None
 
-    # Substring Token எடுத்தல்
     sub_match = re.search(r"\+ \('([^']+)'\)\.substring\(([0-9]+)\)", html)
     token = None
     if sub_match:
@@ -60,7 +57,8 @@ def get_streamtape_download_link(url: str):
 
     return None
 
-async def download_file(download_url, output_path):
+# டவுன்லோட் Progress Bar காட்டும் செயல்முறை
+async def download_file(download_url, output_path, status_msg):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Referer": "https://streamtape.com/"
@@ -71,67 +69,101 @@ async def download_file(download_url, output_path):
             if resp.status != 200:
                 return False
             
+            total_size = int(resp.headers.get("content-length", 0))
+            downloaded = 0
+            last_edit = time.time()
+
             async with aiofiles.open(output_path, mode='wb') as f:
-                async for chunk in resp.content.iter_chunked(2 * 1024 * 1024):
+                async for chunk in resp.content.iter_chunked(1024 * 1024):  # 1MB Chunks
                     await f.write(chunk)
+                    downloaded += len(chunk)
+                    now = time.time()
+
+                    # 3 விநாடிகளுக்கு ஒருமுறை Status Update செய்தல்
+                    if now - last_edit > 3:
+                        last_edit = now
+                        if total_size > 0:
+                            percent = (downloaded / total_size) * 100
+                            cur_mb = downloaded / (1024 * 1024)
+                            tot_mb = total_size / (1024 * 1024)
+                            text = f"📥 **Downloading...**\n`{percent:.1f}%` ({cur_mb:.1f}MB / {tot_mb:.1f}MB)"
+                        else:
+                            cur_mb = downloaded / (1024 * 1024)
+                            text = f"📥 **Downloading...**\n{cur_mb:.1f}MB"
+                        
+                        try:
+                            await status_msg.edit_text(text)
+                        except Exception:
+                            pass
             return True
 
-def get_video_metadata(video_path, thumb_path):
-    """வீடியோவின் நேரம், அகலம்/உயரம் மற்றும் தம்ப்நெயில் எடுக்கும் செயல்முறை"""
+def fix_and_get_metadata(raw_video, final_video, thumb_path):
+    fix_cmd = [
+        "ffmpeg", "-y", "-i", raw_video,
+        "-c", "copy", "-movflags", "+faststart",
+        final_video
+    ]
+    subprocess.run(fix_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    use_file = final_video if os.path.exists(final_video) else raw_video
+
     duration = 0
     width = 1280
     height = 720
     
     try:
-        # 1. கால அளவு மற்றும் அளவுகளைப் பெறுதல்
         cmd = [
             "ffprobe", "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            video_path
+            "-show_entries", "format=duration:stream=width,height",
+            "-of", "csv=p=0",
+            use_file
         ]
-        output = subprocess.check_output(cmd).decode().split()
-        if len(output) >= 3:
-            width = int(output[0])
-            height = int(output[1])
-            duration = int(float(output[2]))
+        out = subprocess.check_output(cmd).decode().split()
+        for line in out:
+            parts = line.split(",")
+            if len(parts) == 2 and parts[0].isdigit():
+                width = int(parts[0])
+                height = int(parts[1])
+            elif len(parts) == 1:
+                try:
+                    duration = int(float(parts[0]))
+                except ValueError:
+                    pass
     except Exception:
         pass
 
     try:
-        # 2. தம்ப்நெயில் இமேஜ் உருவாக்குதல்
-        ss_time = "00:00:02" if duration > 3 else "00:00:00"
+        ss_time = str(min(2, max(0, duration // 2)))
         thumb_cmd = [
             "ffmpeg", "-y", "-ss", ss_time,
-            "-i", video_path, "-vframes", "1",
+            "-i", use_file, "-vframes", "1",
             "-q:v", "2", thumb_path
         ]
         subprocess.run(thumb_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
-    return duration, width, height
+    return duration, width, height, use_file
 
-# அப்லோட் சதவீதத்தை Telegram-ல் காட்ட
-last_edit_time = {}
+# அப்லோட் Progress Bar காட்டும் செயல்முறை
+last_upload_edit = {}
 
-async def progress_callback(current, total, status_msg):
+async def upload_progress(current, total, status_msg):
     now = time.time()
     msg_id = status_msg.id
-    if msg_id not in last_edit_time or (now - last_edit_time[msg_id]) > 4:
-        last_edit_time[msg_id] = now
-        percent = current * 100 / total
-        curr_mb = current / (1024 * 1024)
+    if msg_id not in last_upload_edit or (now - last_upload_edit[msg_id]) > 3:
+        last_upload_edit[msg_id] = now
+        percent = (current / total) * 100
+        cur_mb = current / (1024 * 1024)
         tot_mb = total / (1024 * 1024)
         try:
-            await status_msg.edit_text(f"சேனலுக்கு அப்லோட் ஆகிறது...\n\n🚀 {percent:.1f}% ({curr_mb:.1f} MB / {tot_mb:.1f} MB)")
+            await status_msg.edit_text(f"📤 **Uploading to Channel...**\n`{percent:.1f}%` ({cur_mb:.1f}MB / {tot_mb:.1f}MB)")
         except Exception:
             pass
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_handler(client: Client, message: Message):
-    await message.reply_text("வணக்கம்! Streamtape URL-ஐ அனுப்பவும். நான் முறையான தம்ப்நெயில் மற்றும் நேரத்துடன் @gteer3 சேனலில் அப்லோட் செய்கிறேன்.")
+    await message.reply_text("வணக்கம்! Streamtape URL-ஐ அனுப்பவும்.")
 
 @app.on_message(filters.text & filters.private)
 async def handle_video(client: Client, message: Message):
@@ -141,57 +173,57 @@ async def handle_video(client: Client, message: Message):
         await message.reply_text("சரியான Streamtape URL-ஐ அனுப்பவும்!")
         return
 
-    status_msg = await message.reply_text("Streamtape பக்கத்திலிருந்து வீடியோ லிங்க் எடுக்கப்படுகிறது...")
-    output_filename = f"video_{message.id}.mp4"
-    thumb_filename = f"thumb_{message.id}.jpg"
+    status_msg = await message.reply_text("🔍 **Processing Link...**")
+    raw_video = f"raw_{message.id}.mp4"
+    ready_video = f"ready_{message.id}.mp4"
+    thumb_file = f"thumb_{message.id}.jpg"
 
     try:
-        # Step 1: Direct link பெறுதல்
+        # Step 1: Link பிரித்தெடுத்தல்
         direct_url = await asyncio.to_thread(get_streamtape_download_link, url)
-        
         if not direct_url:
-            await status_msg.edit_text("வீடியோ லிங்க் கிடைக்கவில்லை! வீடியோ நீக்கப்பட்டிருக்கலாம்.")
+            await status_msg.edit_text("❌ வீடியோ லிங்க் கிடைக்கவில்லை!")
             return
 
-        # Step 2: டவுன்லோட் செய்தல்
-        await status_msg.edit_text("வீடியோ டவுன்லோட் ஆகிறது... காத்திருக்கவும்.")
-        success = await download_file(direct_url, output_filename)
+        # Step 2: Downloading Progress உடன் டவுன்லோட்
+        await status_msg.edit_text("📥 **Starting Download...**")
+        success = await download_file(direct_url, raw_video, status_msg)
 
-        if not success or not os.path.exists(output_filename):
-            await status_msg.edit_text("வீடியோ டவுன்லோட் செய்ய முடியவில்லை (Blocked / Link Expired).")
+        if not success or not os.path.exists(raw_video):
+            await status_msg.edit_text("❌ டவுன்லோட் தோல்வியடைந்தது.")
             return
 
-        # Step 3: மெட்டாடேட்டா & தம்ப்நெயில் எடுத்தல்
-        await status_msg.edit_text("தம்ப்நெயில் மற்றும் மெட்டாடேட்டா தயாராகிறது...")
-        duration, width, height = await asyncio.to_thread(get_video_metadata, output_filename, thumb_filename)
-        thumb_path = thumb_filename if os.path.exists(thumb_filename) else None
+        # Step 3: Faststart & Thumbnail
+        await status_msg.edit_text("⚙️ **Optimizing Video & Thumbnail...**")
+        duration, width, height, final_upload_file = await asyncio.to_thread(
+            fix_and_get_metadata, raw_video, ready_video, thumb_file
+        )
+        thumb_path = thumb_file if os.path.exists(thumb_file) else None
 
-        # Step 4: அப்லோட் செய்தல்
-        await status_msg.edit_text("சேனலுக்கு அப்லோட் தொடங்குகிறது...")
+        # Step 4: Uploading Progress உடன் அப்லோட்
+        await status_msg.edit_text("📤 **Starting Upload...**")
         await client.send_video(
             chat_id=TARGET_CHANNEL,
-            video=output_filename,
+            video=final_upload_file,
             duration=duration,
             width=width,
             height=height,
             thumb=thumb_path,
             caption=f"Uploaded: {url}",
             supports_streaming=True,
-            progress=progress_callback,
+            progress=upload_progress,
             progress_args=(status_msg,)
         )
-        await status_msg.edit_text("வெற்றிகரமாக சேனலில் அப்லோட் செய்யப்பட்டது!")
+        await status_msg.edit_text("✅ **வெற்றிகரமாக சேனலில் பதிவேற்றப்பட்டது!**")
 
     except Exception as e:
-        await status_msg.edit_text(f"பிழை ஏற்பட்டது: {str(e)}")
+        await status_msg.edit_text(f"❌ பிழை: {str(e)}")
     finally:
-        # ஃபைல்களை நீக்குதல்
-        if os.path.exists(output_filename):
-            os.remove(output_filename)
-        if os.path.exists(thumb_filename):
-            os.remove(thumb_filename)
+        for f in [raw_video, ready_video, thumb_file]:
+            if os.path.exists(f):
+                os.remove(f)
 
 if __name__ == "__main__":
     print("Bot is starting...")
     app.run()
-        
+                
