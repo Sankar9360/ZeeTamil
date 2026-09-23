@@ -7,7 +7,7 @@ from pyrogram.types import Message
 # உங்கள் Telegram விவரங்கள்
 API_ID = 23990433
 API_HASH = "e6c4b6ee1933711bc4da9d7d17e1eb20"
-BOT_TOKEN = "6390056570:AAEtvENuClK6LevE00FM8oduYU6CTF76Zco"
+BOT_TOKEN = "6489443094:AAFZfStZWucxMwtvk0i7XcbI2aYZvYpNT8E"
 TARGET_CHANNEL = -1002156111560
 
 app = Client(
