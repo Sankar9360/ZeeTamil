@@ -26,30 +26,40 @@ def get_streamtape_download_link(url: str):
         "Referer": "https://streamtape.to/"
     }
     
-    # பக்கத்தை எடுத்தல்
-    response = requests.get(url, headers=headers, timeout=15)
+    # 1. பக்கத்தைப் பெறுதல்
+    response = requests.get(url, headers=headers, timeout=20)
     html = response.text
 
-    # Streamtape-ன் மறைக்கப்பட்ட லிங்க் வடிவங்களை பிரித்தெடுத்தல்
-    # வடிவம் 1: get_video?id=...&token=...
-    match = re.search(r"document\.getElementById\('[\w\d]+'\)\.innerHTML\s*=\s*['\"]([^'\"]+)['\"];", html)
-    if not match:
-        match = re.search(r"innerHTML\s*=\s*['\"]([^'\"]+get_video[^'\"]*)['\"]", html)
-
-    # வடிவம் 2: டோக்கன் சேர்க்கும் வடிவம்
+    # Streamtape புதிய Token Extractions
+    # வடிவம்: document.getElementById('...').innerHTML = "..." + "..." + ('...').substring(x);
+    # பொதுவாக token எடுக்கும் முறை:
     token_match = re.search(r"&token=([a-zA-Z0-9_\-]+)", html)
+    base_match = re.search(r"innerHTML\s*=\s*['\"](//streamtape\.[a-z]+/get_video\?[^'\"]+)['\"]", html)
+    
+    if not base_match:
+        # மாற்று முறை: robotlink அல்லது ideooolink
+        base_match = re.search(r"document\.getElementById\(['\"][^'\"]+['\"]\)\.innerHTML\s*=\s*['\"](//[^'\"]+)['\"]", html)
 
-    if match:
-        raw_link = match.group(1)
-        if not raw_link.startswith("http"):
-            raw_link = "https:" + raw_link
-        return raw_link
+    # Substring வைத்து token சேர்க்கும் புதிய வடிவம்:
+    sub_match = re.search(r"\+ \('([^']+)'\)\.substring\(([0-9]+)\)", html)
 
-    # மாற்று முறை: robotlink ஐடி வழியே எடுத்தல்
+    if base_match:
+        part1 = base_match.group(1)
+        token_part = ""
+        if sub_match:
+            full_str = sub_match.group(1)
+            offset = int(sub_match.group(2))
+            token_part = full_str[offset:]
+        elif token_match:
+            token_part = "&token=" + token_match.group(1)
+
+        final_url = "https:" + part1 + token_part
+        return final_url
+
+    # பழைய robotlink முறை (சில server-களுக்கு):
     robot_match = re.findall(r"ById\('robotlink'\)\.innerHTML\s*=\s*'([^']+)'\s*\+\s*'([^']+)'", html)
     if robot_match:
-        part1, part2 = robot_match[0]
-        return "https:" + part1 + part2
+        return "https:" + robot_match[0][0] + robot_match[0][1]
 
     return None
 
@@ -60,8 +70,10 @@ async def download_file(download_url, output_path, status_msg):
     }
     
     async with aiohttp.ClientSession(headers=headers) as session:
-        async with session.get(download_url) as resp:
+        # Streamtape stream லிங்க்கை redirect செய்து mp4 ஃபைலை எடுக்கும்
+        async with session.get(download_url, allow_redirects=True) as resp:
             if resp.status != 200:
+                print(f"Download status: {resp.status}")
                 return False
             
             async with aiofiles.open(output_path, mode='wb') as f:
@@ -85,11 +97,11 @@ async def handle_video(client: Client, message: Message):
     output_filename = f"video_{message.id}.mp4"
 
     try:
-        # Step 1: பைதான் வழியே Direct Link-ஐ டீகோட் செய்தல்
+        # Step 1: Direct Link-ஐ எடுத்தல்
         direct_url = await asyncio.to_thread(get_streamtape_download_link, url)
         
         if not direct_url:
-            await status_msg.edit_text("வீடியோ லிங்க் கிடைக்கவில்லை! வீடியோ நீக்கப்பட்டிருக்கலாம் அல்லது Streamtape பாதுகாப்பு மாறியிருக்கலாம்.")
+            await status_msg.edit_text("வீடியோ லிங்க் கிடைக்கவில்லை! வீடியோ நீக்கப்பட்டிருக்கலாம்.")
             return
 
         # Step 2: வீடியோவை டவுன்லோட் செய்தல்
@@ -113,7 +125,6 @@ async def handle_video(client: Client, message: Message):
     except Exception as e:
         await status_msg.edit_text(f"பிழை ஏற்பட்டது: {str(e)}")
     finally:
-        # தேவையில்லாத ஃபைலை நீக்குதல்
         if os.path.exists(output_filename):
             os.remove(output_filename)
 
