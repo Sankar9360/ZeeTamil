@@ -5,8 +5,8 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 
 # Railway Environment Variables வழியாக பெறப்படும்
-API_ID = int(os.environ.get("API_ID"))
-API_HASH = os.environ.get("API_HASH")
+API_ID = int(os.environ.get("23990433"))
+API_HASH = os.environ.get("e6c4b6ee1933711bc4da9d7d17e1eb20")
 BOT_TOKEN = os.environ.get("6300056570:AAEtxFMyGlK6LexF0QEM8qduYH6GTF762co")
 TARGET_CHANNEL = os.environ.get("-1002164111160")  # எ.கா: @mychannel அல்லது -100xxxxxxxxxx
 
