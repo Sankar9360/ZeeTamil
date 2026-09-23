@@ -11,7 +11,7 @@ from pyrogram.types import Message
 API_ID = 23990433
 API_HASH = "e6c4b6ee1933711bc4da9d7d17e1eb20"
 BOT_TOKEN = "6489443094:AAFZfStZWucxMwtvk0i7XcbI2aYZvYpNT8E"
-TARGET_CHANNEL = -1002156111560
+TARGET_CHANNEL = "@gteer3"  # Channel username மூலம் Peer ID பிரச்சனை தீர்க்கப்பட்டது
 
 app = Client(
     "streamtape_bot",
@@ -29,15 +29,14 @@ def get_streamtape_download_link(url: str):
     response = requests.get(url, headers=headers, timeout=20)
     html = response.text
 
-    # Streamtape வீடியோ ஐடி மற்றும் டோக்கனைப் பிரித்தெடுத்தல்
+    # Streamtape வீடியோ ஐடி எடுப்பது
     id_match = re.search(r"get_video\?id=([a-zA-Z0-9_\-]+)", html)
     if not id_match:
-        # மற்றொரு முறை
         id_match = re.search(r"/v/([a-zA-Z0-9_\-]+)", url)
     
     video_id = id_match.group(1) if id_match else None
 
-    # Substring டோக்கனை எடுத்தல்
+    # Substring Token எடுப்பது
     sub_match = re.search(r"\+ \('([^']+)'\)\.substring\(([0-9]+)\)", html)
     token = None
     if sub_match:
@@ -45,18 +44,15 @@ def get_streamtape_download_link(url: str):
         offset = int(sub_match.group(2))
         token = full_str[offset:]
     else:
-        # நேரடி டோக்கன் வடிவம்
         token_match = re.search(r"&token=([a-zA-Z0-9_\-]+)", html)
         if token_match:
             token = token_match.group(1)
 
     if video_id and token:
-        # டொமைன் பிழைகளைத் தவிர்க்க நிலையான டொமைனில் லிங்க் உருவாக்குதல்
         clean_token = token.replace("&token=", "")
         final_url = f"https://streamtape.com/get_video?id={video_id}&token={clean_token}"
         return final_url
 
-    # Fallback முறை
     robot_match = re.findall(r"ById\('robotlink'\)\.innerHTML\s*=\s*'([^']+)'\s*\+\s*'([^']+)'", html)
     if robot_match:
         raw = "https:" + robot_match[0][0] + robot_match[0][1]
@@ -74,7 +70,6 @@ async def download_file(download_url, output_path):
     async with aiohttp.ClientSession(headers=headers) as session:
         async with session.get(download_url, allow_redirects=True) as resp:
             if resp.status != 200:
-                print(f"Failed with status: {resp.status}")
                 return False
             
             async with aiofiles.open(output_path, mode='wb') as f:
@@ -84,7 +79,7 @@ async def download_file(download_url, output_path):
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_handler(client: Client, message: Message):
-    await message.reply_text("வணக்கம்! Streamtape வீடியோ URL-ஐ அனுப்புங்கள். நான் சேனலில் பதிவேற்றுகிறேன்.")
+    await message.reply_text("வணக்கம்! Streamtape URL-ஐ அனுப்பவும். நான் @gteer3 சேனலில் அப்லோட் செய்கிறேன்.")
 
 @app.on_message(filters.text & filters.private)
 async def handle_video(client: Client, message: Message):
@@ -98,7 +93,7 @@ async def handle_video(client: Client, message: Message):
     output_filename = f"video_{message.id}.mp4"
 
     try:
-        # Step 1: தூய streamtape.com லிங்க்கை உருவாக்குதல்
+        # Step 1: Direct link பெறுதல்
         direct_url = await asyncio.to_thread(get_streamtape_download_link, url)
         
         if not direct_url:
@@ -121,7 +116,7 @@ async def handle_video(client: Client, message: Message):
             caption=f"Uploaded: {url}",
             supports_streaming=True
         )
-        await status_msg.edit_text("வெற்றிகரமாக அப்லோட் செய்யப்பட்டது!")
+        await status_msg.edit_text("வெற்றிகரமாக சேனலில் அப்லோட் செய்யப்பட்டது!")
 
     except Exception as e:
         await status_msg.edit_text(f"பிழை ஏற்பட்டது: {str(e)}")
@@ -132,4 +127,4 @@ async def handle_video(client: Client, message: Message):
 if __name__ == "__main__":
     print("Bot is starting...")
     app.run()
-    
+                
